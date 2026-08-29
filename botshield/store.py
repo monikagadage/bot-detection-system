@@ -63,6 +63,7 @@ class Store:
         self._labels: list[tuple[dict, int, str]] = []        # (features, label, source)
         self._challenges: dict[str, dict] = {}                # token -> {ip, issued, solved}
         self._decisions: dict[str, dict] = {}                 # request_id -> {ip, features, action}
+        self._recent: deque = deque(maxlen=1000)              # bounded feed for the dashboard
         self._blocklist: set[str] = set()
         self._reputation: dict[str, float] = {}              # dynamic overrides
 
@@ -211,20 +212,53 @@ class Store:
 
     # ---- decision log --------------------------------------------------
 
-    def log_decision(self, request_id: str, ip: str, features: dict, action: str) -> None:
+    def log_decision(self, request_id: str, ip: str, features: dict, decision,
+                     route: str = "") -> None:
         with self._lock:
             self._decisions[request_id] = {
                 "ip": ip,
                 "features": dict(features),
-                "action": action,
+                "action": decision.action,
             }
+            # Bounded feed for the dashboard: wall-clock time + display fields.
+            self._recent.append({
+                "ts": time.time(),
+                "request_id": request_id,
+                "ip": ip,
+                "route": route,
+                "action": decision.action,
+                "score": round(decision.score, 3),
+                "model_proba": round(decision.model_proba, 3),
+                "reason": (decision.reasons[0] if decision.reasons else ""),
+            })
             if self._db is not None:
-                self._db.put_decision(request_id, ip, features, action, time.time())
+                self._db.put_decision(request_id, ip, features, decision.action, time.time())
 
     def get_decision(self, request_id: str) -> dict | None:
         with self._lock:
             rec = self._decisions.get(request_id)
             return dict(rec) if rec is not None else None
+
+    def recent(self, limit: int = 50) -> list[dict]:
+        """Most recent decisions first — for the dashboard's live feed."""
+        with self._lock:
+            return list(self._recent)[-limit:][::-1]
+
+    def timeseries(self, bucket_s: float = 10.0, span_s: float = 300.0) -> list[dict]:
+        """Decisions bucketed by wall-clock time, oldest first."""
+        now = time.time()
+        start = now - span_s
+        buckets: dict[int, dict[str, int]] = {}
+        with self._lock:
+            rows = [r for r in self._recent if r["ts"] >= start]
+        for r in rows:
+            b = int((r["ts"] - start) // bucket_s)
+            slot = buckets.setdefault(b, {"ALLOW": 0, "CHALLENGE": 0, "BLOCK": 0})
+            slot[r["action"]] += 1
+        return [
+            {"t": round(start + b * bucket_s), **buckets[b]}
+            for b in sorted(buckets)
+        ]
 
     def stats(self) -> dict:
         with self._lock:

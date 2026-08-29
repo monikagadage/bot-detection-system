@@ -17,6 +17,7 @@ from . import rules
 from .decision import ALLOW, decide
 from .features import event_target_key, extract, vector
 from .model import LogisticRegression
+from .routes import route_of
 
 
 class Pipeline:
@@ -43,7 +44,8 @@ class Pipeline:
         decision = decide(event, features, hard_reason, rule_score, hits, self.model, self.store)
 
         request_id = f"req-{next(self._ids)}"
-        self.store.log_decision(request_id, event.ip, features, decision.action)
+        self.store.log_decision(request_id, event.ip, features, decision,
+                                route=route_of(event.path))
 
         # A filled honeypot is ground truth we get for free — label it now.
         if features["honeypot_filled"]:

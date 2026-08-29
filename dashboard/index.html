@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>botshield</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --ink: #1a1d21; --muted: #6b7280;
+    --line: #e5e7eb; --allow: #1a7f37; --challenge: #b7791f; --block: #c0392b;
+    --pos: #c0392b; --neg: #1a7f37; --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1116; --panel: #171b21; --ink: #e6e8eb; --muted: #9aa4b2;
+      --line: #2a2f37; --allow: #3fb950; --challenge: #d29922; --block: #f85149;
+      --pos: #f85149; --neg: #3fb950; --accent: #4f8cff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 12px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .tile .n { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+  .tile.allow .n { color: var(--allow); } .tile.challenge .n { color: var(--challenge); } .tile.block .n { color: var(--block); }
+  .bars { display: flex; flex-direction: column; gap: 6px; }
+  .bar { display: grid; grid-template-columns: 150px 1fr 46px; align-items: center; gap: 8px; font-size: 12px; }
+  .bar .track { height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; }
+  .bar .fill { height: 100%; }
+  .bar .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  #spark { display: flex; align-items: flex-end; gap: 2px; height: 90px; }
+  #spark .col { flex: 1; display: flex; flex-direction: column-reverse; min-width: 3px; }
+  #spark .seg { width: 100%; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  td.reason { max-width: 320px; color: var(--muted); }
+  .feed-scroll { max-height: 380px; overflow: auto; }
+  .pill { padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill.ALLOW { color: var(--allow); background: color-mix(in srgb, var(--allow) 15%, transparent); }
+  .pill.CHALLENGE { color: var(--challenge); background: color-mix(in srgb, var(--challenge) 15%, transparent); }
+  .pill.BLOCK { color: var(--block); background: color-mix(in srgb, var(--block) 15%, transparent); }
+  button {
+    font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .controls { display: flex; gap: 10px; align-items: center; margin: 18px 0; flex-wrap: wrap; }
+  .controls .status { color: var(--muted); font-size: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>botshield <span>· live</span></h1>
+    <div class="meta" id="meta">connecting…</div>
+  </header>
+
+  <div class="controls">
+    <button class="primary" id="replay">▶ Replay demo traffic</button>
+    <button id="retrain">↻ Retrain model</button>
+    <span class="status" id="status"></span>
+  </div>
+
+  <div class="tiles" style="margin-bottom:16px">
+    <div class="tile allow"><div class="n" id="t-allow">0</div><div class="k">allow</div></div>
+    <div class="tile challenge"><div class="n" id="t-challenge">0</div><div class="k">challenge</div></div>
+    <div class="tile block"><div class="n" id="t-block">0</div><div class="k">block</div></div>
+    <div class="tile"><div class="n" id="t-total">0</div><div class="k">decisions</div></div>
+  </div>
+
+  <div class="grid" style="margin-bottom:16px">
+    <div class="panel">
+      <h2>Decisions over time (10s buckets)</h2>
+      <div id="spark"></div>
+    </div>
+    <div class="panel">
+      <h2>What the model is leaning on</h2>
+      <div class="bars" id="weights"></div>
+    </div>
+    <div class="panel">
+      <h2>Counters</h2>
+      <div class="bars" id="counters"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Live decision feed</h2>
+    <div class="feed-scroll">
+      <table>
+        <thead><tr><th>time</th><th>ip</th><th>route</th><th>action</th><th>score</th><th>top reason</th></tr></thead>
+        <tbody id="feed"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString();
+
+async function jget(u) { const r = await fetch(u); return r.json(); }
+async function jpost(u) { const r = await fetch(u, { method: "POST", body: "{}" }); return r.json(); }
+
+function renderTiles(s) {
+  const a = s.decisions_by_action || {};
+  $("t-allow").textContent = a.ALLOW || 0;
+  $("t-challenge").textContent = a.CHALLENGE || 0;
+  $("t-block").textContent = a.BLOCK || 0;
+  $("t-total").textContent = s.decisions || 0;
+  $("meta").innerHTML = `counter: <b>${s.counter_mode}</b> · seed model on ${s.seed_examples} rows · `
+    + `${s.labels} labels · ${s.persistent ? "persistent" : "in-memory"}`
+    + (s.replaying ? ` · <b>replaying…</b>` : "");
+}
+
+function renderWeights(feats) {
+  const max = Math.max(...feats.map(([, w]) => Math.abs(w)), 0.001);
+  $("weights").innerHTML = feats.map(([name, w]) => {
+    const pct = (Math.abs(w) / max * 100).toFixed(0);
+    const col = w >= 0 ? "var(--pos)" : "var(--neg)";
+    return `<div class="bar"><span class="mono">${name}</span>`
+      + `<span class="track"><span class="fill" style="width:${pct}%;background:${col}"></span></span>`
+      + `<span class="val">${w >= 0 ? "+" : ""}${w.toFixed(2)}</span></div>`;
+  }).join("");
+}
+
+function renderCounters(s) {
+  const rows = [
+    ["tracked IPs", s.tracked_ips],
+    ["tracked endpoints", s.tracked_targets],
+    ["challenges issued", s.challenges_issued],
+    ["challenges solved", s.challenges_solved],
+    ["blocklist size", s.blocklist_size],
+  ];
+  if (s.sketch_bytes) rows.push(["sketch memory", (s.sketch_bytes / 1024).toFixed(0) + " KB"]);
+  $("counters").innerHTML = rows.map(([k, v]) =>
+    `<div class="bar"><span>${k}</span><span></span><span class="val">${v}</span></div>`).join("");
+}
+
+function renderSpark(series) {
+  const cap = Math.max(...series.map(b => (b.ALLOW + b.CHALLENGE + b.BLOCK)), 1);
+  $("spark").innerHTML = series.slice(-40).map(b => {
+    const seg = (n, c) => n ? `<span class="seg" style="height:${n / cap * 90}px;background:${c}"></span>` : "";
+    return `<span class="col" title="${fmtTime(b.t)}">`
+      + seg(b.BLOCK, "var(--block)") + seg(b.CHALLENGE, "var(--challenge)") + seg(b.ALLOW, "var(--allow)")
+      + `</span>`;
+  }).join("") || '<span class="status">no traffic yet — hit “Replay demo traffic”</span>';
+}
+
+function renderFeed(rows) {
+  $("feed").innerHTML = rows.map(r =>
+    `<tr><td>${fmtTime(r.ts)}</td><td class="mono">${r.ip}</td><td class="mono">${r.route || "—"}</td>`
+    + `<td><span class="pill ${r.action}">${r.action}</span></td>`
+    + `<td>${r.score.toFixed(2)}</td><td class="reason">${r.reason || ""}</td></tr>`).join("");
+}
+
+async function tick() {
+  try {
+    const [s, recent, ts] = await Promise.all([
+      jget("/stats"), jget("/recent?n=60"), jget("/timeseries"),
+    ]);
+    renderTiles(s); renderWeights(s.model_top_features);
+    renderCounters(s); renderSpark(ts.series); renderFeed(recent.recent);
+  } catch (e) { $("meta").textContent = "server unreachable"; }
+}
+
+$("replay").onclick = async () => {
+  $("replay").disabled = true; $("status").textContent = "replaying demo traffic…";
+  await jpost("/replay");
+  setTimeout(() => { $("replay").disabled = false; $("status").textContent = ""; }, 12000);
+};
+$("retrain").onclick = async () => {
+  $("retrain").disabled = true; $("status").textContent = "retraining…";
+  const r = await jpost("/retrain");
+  $("status").textContent = `retrained on ${r.total_examples} examples`;
+  $("retrain").disabled = false; tick();
+};
+
+tick();
+setInterval(tick, 1500);
+</script>
+</body>
+</html>

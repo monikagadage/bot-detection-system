@@ -154,10 +154,14 @@ So the store keeps a second set of sliding windows keyed by
 `route + ASN` (`/login|residential`) instead of by IP, and feature
 extraction adds `target_req_60s` and `target_distinct_ips_60s`. When an
 endpoint sees many requests from many distinct IPs at once, the
-`distributed_attack` rule fires — and because it's an **escalation rule**,
-every request to that endpoint is forced to at least a CHALLENGE. Real users
-pass it transparently; the bot farm, which can't solve challenges at scale,
-stalls. `simulate.py`'s `stuffing_campaign` archetype shows this: the same
+`distributed_attack` rule fires and contributes to the score. On a
+**sensitive** route (`/login`, `/signup`, `/checkout`, …) the
+`distributed_attack_sensitive` variant also fires, and *that* one is an
+**escalation rule**: every request to the endpoint is forced to at least a
+CHALLENGE. Real users pass it transparently; the bot farm, which can't solve
+challenges at scale, stalls. Challenging everyone hitting `/login` during an
+attack is an acceptable cost; doing the same for the blog is not — hence the
+split. `simulate.py`'s `stuffing_campaign` archetype shows it: the same
 requests that are `ALLOW`ed one at a time are `CHALLENGE`d / `BLOCK`ed once
 they arrive as a swarm.
 
@@ -284,6 +288,11 @@ See [README.md](README.md). Short version:
 ```bash
 python3 selfcheck.py     # [PASS]/[FAIL] for every component
 python3 simulate.py      # end-to-end: traffic -> decisions -> feedback -> retrain
-python3 server.py        # the actual service, then curl localhost:8500/check
+python3 server.py        # the service + live dashboard at http://localhost:8500
 python3 benchmarks/hotpath_latency.py   # (and the other benchmarks/*.py)
 ```
+
+The dashboard (`dashboard/index.html`, served at `GET /`) is a demo aid, not
+part of the detector: it polls `/stats`, `/recent`, and `/timeseries`, and
+its **Replay demo traffic** button drives synthetic traffic through the same
+`pipeline.check()` the API uses.

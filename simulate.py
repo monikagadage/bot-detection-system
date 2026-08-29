@@ -50,7 +50,7 @@ def _start_server() -> ThreadingHTTPServer:
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     for _ in range(50):
         try:
-            _get("/")
+            _get("/api")
             return httpd
         except OSError:
             time.sleep(0.05)
@@ -149,6 +149,13 @@ def main() -> None:
     batch2 = generate_sessions(live_mix, seed=202, ts_start=3_000_000.0)
     results2 = _send_batch(batch2)
     _report("PHASE 3 — after feedback + retrain (fresh traffic)", results2)
+
+    # ---- dashboard endpoints are populated -----------------------
+    recent = _get("/recent?n=10")["recent"]
+    series = _get("/timeseries")["series"]
+    print(f"\ndashboard: /recent -> {len(recent)} rows, "
+          f"/timeseries -> {len(series)} buckets "
+          f"(open http://127.0.0.1:8500/ when running server.py directly)")
 
     print("\n" + json.dumps(_get("/stats"), indent=2))
     httpd.shutdown()

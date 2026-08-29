@@ -33,7 +33,9 @@ from dataclasses import dataclass
 from .routes import SENSITIVE_ROUTES, route_of
 
 # Soft rules that, when they fire, guarantee the decision is at least CHALLENGE.
-ESCALATE_RULES = {"distributed_attack"}
+# Only the *sensitive*-endpoint variant escalates: challenging everyone
+# hitting /login during an attack is acceptable; doing it for the blog is not.
+ESCALATE_RULES = {"distributed_attack_sensitive"}
 
 # Fired rule weight that corresponds to a soft score of 1.0 (values above
 # saturate). Tuned so a couple of strong signals ~= "very likely a bot".
@@ -66,6 +68,8 @@ def evaluate(event, features: dict, store) -> tuple[str | None, float, list[Rule
 
     # ---- soft rules: each contributes its weight if it fires --------------
     # (name, condition, weight, human-readable reason)
+    sensitive_route = route_of(event.path) in SENSITIVE_ROUTES
+    swarm = features["target_distinct_ips_60s"] >= 10 and features["target_req_60s"] >= 30
     soft = [
         ("ua_missing",          features["ua_missing"] == 1.0,        2.0, "no User-Agent header"),
         ("ua_bot_token",        features["ua_bot_token"] == 1.0,      3.0, "User-Agent names a script or crawler"),
@@ -78,13 +82,12 @@ def evaluate(event, features: dict, store) -> tuple[str | None, float, list[Rule
                                                                      3.0, "near-constant gap between requests"),
         ("datacenter_ip",       features["asn_datacenter"] == 1.0,    1.5, "request from a hosting/datacenter network"),
         ("bad_reputation",      features["ip_reputation"] > 0.6,      2.5, "IP has poor historical reputation"),
-        ("distributed_attack",
-            features["target_distinct_ips_60s"] >= 8 and features["target_req_60s"] >= 25,
-            4.0,
+        ("distributed_attack", swarm, 3.5,
             "this endpoint is under coordinated load from many IPs at once"),
+        ("distributed_attack_sensitive", swarm and sensitive_route, 2.5,
+            "coordinated load on a login/signup-class endpoint"),
         ("sensitive_endpoint_pressure",
-            route_of(event.path) in SENSITIVE_ROUTES and features["target_req_60s"] >= 15,
-            1.5,
+            sensitive_route and features["target_req_60s"] >= 15, 1.5,
             "elevated traffic to a login/signup-class endpoint"),
     ]
 

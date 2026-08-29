@@ -19,8 +19,14 @@ no framework.
 cd bot-detection-system
 python3 selfcheck.py    # [PASS]/[FAIL] for every component
 python3 simulate.py     # the whole thing end to end (~10s)
-python3 server.py       # the actual HTTP service on 127.0.0.1:8500
+python3 server.py       # the HTTP service + live dashboard on 127.0.0.1:8500
 ```
+
+Then open **http://localhost:8500** for a live dashboard — decision tiles, a
+traffic timeline, what the model is currently leaning on, and a rolling feed
+of decisions. Hit **Replay demo traffic** to watch it classify a mixed
+human/bot stream in real time, or **Retrain model** to fold in collected
+labels.
 
 ### `simulate.py` — the feedback loop, made visible
 
@@ -92,7 +98,11 @@ curl -s localhost:8500/stats
 | `POST /challenge` | `{"token": "..."}` | mark a challenge passed |
 | `POST /feedback` | `{"request_id": "...", "label": 0\|1}` | teach it: 0 = human, 1 = bot |
 | `POST /retrain` | `{}` | refit the model on the seed set + all collected labels |
+| `POST /replay` | `{}` | run a demo traffic mix through the live pipeline (for the dashboard) |
 | `GET /stats` | — | counters + the model's current top features |
+| `GET /recent?n=50` | — | the latest decisions (the dashboard's feed) |
+| `GET /timeseries` | — | decisions bucketed by time |
+| `GET /` | — | the live dashboard (HTML); `GET /api` for this list as JSON |
 
 ### Persistence (optional)
 
@@ -134,7 +144,8 @@ botshield/
   pipeline.py    wires the stages; owns the feedback loop (retrain)
   synth.py       labeled synthetic traffic: 6 bot archetypes + humans
   bootstrap.py   build a trained, wired system in one call
-server.py        the HTTP service
+server.py        the HTTP service + JSON API
+dashboard/       single-file live dashboard served at GET /
 simulate.py      end-to-end demo
 selfcheck.py     [PASS]/[FAIL] for every component
 benchmarks/      latency, throughput, memory-under-attack, model cost
