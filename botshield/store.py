@@ -15,15 +15,23 @@ Pass `persist_path` to mirror the labels, decision log, and challenge tokens
 to a SQLite file and reload them on startup — see `persist.py`. The
 in-memory structures stay the read path; SQLite is just write-through
 durability.
+
+Pass `counter="sketch"` to estimate request *rates* from a fixed-size
+count-min sketch instead of exact per-IP history (`sketch.py`). Under a
+high-cardinality attack (millions of distinct IPs) the exact store grows
+without bound; the sketch does not. In sketch mode the per-IP / per-target
+history deques are also capped, so `distinct_paths` and timing features are
+computed from a bounded recent tail.
 """
 
 from __future__ import annotations
 
 import threading
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 
 from .persist import Db
+from .sketch import CountMinSketch
 
 # IPs whose first two octets match one of these are treated as having poor
 # reputation (score 0.8). Stands in for a real reputation feed. 185.* and
@@ -34,17 +42,36 @@ _STATIC_BAD_PREFIXES = ("185.", "45.", "193.")
 # 120s of retention is plenty and keeps memory bounded.
 _RETENTION_S = 120.0
 
+# Sketch mode: time-bucket width for rate estimation, and caps on the
+# bounded structures.
+_BUCKET_S = 5.0
+_SKETCH_DEQUE_CAP = 64      # recent events kept per IP / per target
+_SKETCH_MAX_KEYS = 4096     # distinct IPs / targets kept before LRU eviction
+
 
 class Store:
-    def __init__(self, persist_path: str | None = None) -> None:
+    def __init__(self, persist_path: str | None = None, counter: str = "exact") -> None:
+        if counter not in ("exact", "sketch"):
+            raise ValueError("counter must be 'exact' or 'sketch'")
         self._lock = threading.Lock()
-        self._events: dict[str, deque] = defaultdict(deque)   # ip -> deque[(ts, path)]
-        self._targets: dict[str, deque] = defaultdict(deque)  # target_key -> deque[(ts, ip)]
+        self.counter = counter
+        self._sketch_mode = counter == "sketch"
+
+        maxlen = _SKETCH_DEQUE_CAP if self._sketch_mode else None
+        self._events: dict[str, deque] = defaultdict(lambda: deque(maxlen=maxlen))
+        self._targets: dict[str, deque] = defaultdict(lambda: deque(maxlen=maxlen))
         self._labels: list[tuple[dict, int, str]] = []        # (features, label, source)
         self._challenges: dict[str, dict] = {}                # token -> {ip, issued, solved}
         self._decisions: dict[str, dict] = {}                 # request_id -> {ip, features, action}
         self._blocklist: set[str] = set()
         self._reputation: dict[str, float] = {}              # dynamic overrides
+
+        # Sketch mode: fixed-size rate estimators (key = "<id>#<bucket>"), and
+        # LRU order so the history maps can be trimmed to _SKETCH_MAX_KEYS.
+        self._ip_sketch = CountMinSketch() if self._sketch_mode else None
+        self._target_sketch = CountMinSketch() if self._sketch_mode else None
+        self._ip_lru: OrderedDict[str, None] = OrderedDict()
+        self._target_lru: OrderedDict[str, None] = OrderedDict()
 
         # Optional SQLite durability. Reload prior state so /feedback still
         # resolves old request_ids and the model can be retrained from disk.
@@ -54,6 +81,19 @@ class Store:
             self._decisions = self._db.load_decisions()
             self._challenges = self._db.load_challenges()
 
+    @staticmethod
+    def _buckets(now: float, seconds: float) -> range:
+        return range(int((now - seconds) // _BUCKET_S), int(now // _BUCKET_S) + 1)
+
+    def _touch_lru(self, lru: "OrderedDict[str, None]", key: str, history: dict) -> None:
+        """Record recent use of `key`; evict the least-recently-used history
+        entry once the map exceeds the cap (sketch mode only)."""
+        lru[key] = None
+        lru.move_to_end(key)
+        while len(lru) > _SKETCH_MAX_KEYS:
+            old, _ = lru.popitem(last=False)
+            history.pop(old, None)
+
     # ---- sliding-window request history -------------------------------------
 
     def record(self, ip: str, ts: float, path: str) -> None:
@@ -61,15 +101,29 @@ class Store:
         with self._lock:
             dq = self._events[ip]
             dq.append((ts, path))
-            cutoff = ts - _RETENTION_S
-            while dq and dq[0][0] < cutoff:
-                dq.popleft()
+            if dq.maxlen is None:
+                cutoff = ts - _RETENTION_S
+                while dq and dq[0][0] < cutoff:
+                    dq.popleft()
+            if self._sketch_mode:
+                self._ip_sketch.add(f"{ip}#{int(ts // _BUCKET_S)}")
+                self._touch_lru(self._ip_lru, ip, self._events)
 
     def window(self, ip: str, now: float, seconds: float) -> list[tuple[float, str]]:
-        """Every (ts, path) from this IP in the last `seconds` seconds."""
+        """Every (ts, path) from this IP in the last `seconds` seconds.
+        In sketch mode this is the bounded recent tail, not the full history."""
         lo = now - seconds
         with self._lock:
             return [(t, p) for (t, p) in self._events.get(ip, ()) if t >= lo]
+
+    def request_rate(self, ip: str, now: float, seconds: float) -> float:
+        """How many requests this IP made in the last `seconds` seconds.
+        Exact from history, or estimated from the count-min sketch."""
+        if not self._sketch_mode:
+            return float(len(self.window(ip, now, seconds)))
+        with self._lock:
+            return float(sum(self._ip_sketch.estimate(f"{ip}#{b}")
+                             for b in self._buckets(now, seconds)))
 
     # ---- per-target (per-endpoint) request history -------------------------
     # Keyed by route+ASN instead of by IP, so a coordinated attack spread
@@ -79,15 +133,28 @@ class Store:
         with self._lock:
             dq = self._targets[target_key]
             dq.append((ts, ip))
-            cutoff = ts - _RETENTION_S
-            while dq and dq[0][0] < cutoff:
-                dq.popleft()
+            if dq.maxlen is None:
+                cutoff = ts - _RETENTION_S
+                while dq and dq[0][0] < cutoff:
+                    dq.popleft()
+            if self._sketch_mode:
+                self._target_sketch.add(f"{target_key}#{int(ts // _BUCKET_S)}")
+                self._touch_lru(self._target_lru, target_key, self._targets)
 
     def target_window(self, target_key: str, now: float, seconds: float) -> list[tuple[float, str]]:
-        """Every (ts, ip) hitting this route+ASN in the last `seconds` seconds."""
+        """Every (ts, ip) hitting this route+ASN in the last `seconds` seconds.
+        In sketch mode this is the bounded recent tail, not the full history."""
         lo = now - seconds
         with self._lock:
             return [(t, ip) for (t, ip) in self._targets.get(target_key, ()) if t >= lo]
+
+    def target_rate(self, target_key: str, now: float, seconds: float) -> float:
+        """Total requests to this route+ASN in the last `seconds` seconds."""
+        if not self._sketch_mode:
+            return float(len(self.target_window(target_key, now, seconds)))
+        with self._lock:
+            return float(sum(self._target_sketch.estimate(f"{target_key}#{b}")
+                             for b in self._buckets(now, seconds)))
 
     # ---- reputation / blocklist -------------------------------------------
 
@@ -168,8 +235,10 @@ class Store:
             for _f, _l, src in self._labels:
                 label_sources[src] += 1
             return {
+                "counter_mode": self.counter,
                 "tracked_ips": len(self._events),
                 "tracked_targets": len(self._targets),
+                "sketch_bytes": (self._ip_sketch.memory_bytes() if self._sketch_mode else 0),
                 "decisions": len(self._decisions),
                 "decisions_by_action": dict(actions),
                 "labels": len(self._labels),

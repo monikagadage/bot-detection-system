@@ -29,6 +29,8 @@ Routes:
 
 Set BOTSHIELD_DATA=./data to persist labels, the decision log, and the
 learned model across restarts (SQLite + model.json under that directory).
+Set BOTSHIELD_COUNTER=sketch to estimate request rates from a fixed-size
+count-min sketch instead of exact per-IP history.
 """
 
 from __future__ import annotations
@@ -42,13 +44,15 @@ from botshield.events import RequestEvent
 from botshield.features import FEATURE_NAMES
 
 _DATA_DIR = os.environ.get("BOTSHIELD_DATA")
+_COUNTER = os.environ.get("BOTSHIELD_COUNTER", "exact")
 if _DATA_DIR:
     SYS = build_system(
         persist_path=os.path.join(_DATA_DIR, "botshield.db"),
         model_path=os.path.join(_DATA_DIR, "model.json"),
+        counter=_COUNTER,
     )
 else:
-    SYS = build_system()
+    SYS = build_system(counter=_COUNTER)
 
 
 def _make_handler():

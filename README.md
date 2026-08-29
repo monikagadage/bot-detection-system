@@ -106,6 +106,18 @@ restart the model and labels reload, and `/feedback` still resolves
 `request_id`s issued before the restart. Without the env var everything
 stays in memory (the default).
 
+### Approximate counters (optional)
+
+```bash
+BOTSHIELD_COUNTER=sketch python3 server.py
+```
+
+Request-rate features (`req_10s`, `req_60s`, `target_req_60s`) are estimated
+from a fixed-size **count-min sketch** (`botshield/sketch.py`) instead of
+exact per-IP history. Memory stays flat no matter how many distinct IPs
+attack you — the point of the structure. `benchmarks/memory_under_attack.py`
+shows the difference.
+
 ## Layout
 
 ```
@@ -114,6 +126,7 @@ botshield/
   routes.py      normalize /article/5 -> /article/{id}; per-endpoint keys
   store.py       sliding-window counters (per-IP AND per-endpoint) + reputation + labels
   persist.py     optional SQLite write-through for labels / decisions / challenges
+  sketch.py      count-min sketch: fixed-memory rate estimates under attack
   features.py    event + window state  ->  a 15-value feature row
   rules.py       hard rules block, escalation rules force a challenge, soft rules score
   model.py       logistic regression from scratch (batch + online training)

@@ -36,6 +36,7 @@ def build_system(
     seed: int = 0,
     persist_path: str | None = None,
     model_path: str | None = None,
+    counter: str = "exact",
 ) -> System:
     sessions = generate_sessions(seed_session_counts(), seed=seed)
     seed_X, seed_y = build_dataset(sessions)
@@ -47,7 +48,7 @@ def build_system(
         model = LogisticRegression(len(FEATURE_NAMES))
         model.fit(seed_X, seed_y)
 
-    store = Store(persist_path=persist_path)
+    store = Store(persist_path=persist_path, counter=counter)
     pipeline = Pipeline(store, model, model_path=model_path)
 
     # If durable labels came back from disk, catch the freshly built model up.

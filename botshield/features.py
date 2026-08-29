@@ -43,8 +43,13 @@ def event_target_key(event: RequestEvent) -> str:
 def extract(event: RequestEvent, store) -> dict:
     """Compute every feature in FEATURE_NAMES for this event."""
     now = event.ts
-    w10 = store.window(event.ip, now, 10)
     w60 = store.window(event.ip, now, 60)
+
+    # Request *rates* come from the store's counter (exact history, or a
+    # count-min sketch); the timing / distinct-path features below still need
+    # the actual recent events, so they read the window list.
+    req_10s = store.request_rate(event.ip, now, 10)
+    req_60s = store.request_rate(event.ip, now, 60)
 
     # Inter-arrival times: the gaps between consecutive requests from this IP.
     # Humans are bursty and irregular; a loop with time.sleep(2) is not.
@@ -64,12 +69,13 @@ def extract(event: RequestEvent, store) -> dict:
 
     ua = event.user_agent.lower()
 
-    target = store.target_window(event_target_key(event), now, 60)
+    tkey = event_target_key(event)
+    target = store.target_window(tkey, now, 60)
     target_distinct_ips = len({ip for (_t, ip) in target})
 
     return {
-        "req_10s": float(len(w10)),
-        "req_60s": float(len(w60)),
+        "req_10s": float(req_10s),
+        "req_60s": float(req_60s),
         "distinct_paths_60s": float(len({p for (_t, p) in w60})),
         "iat_mean": float(iat_mean),
         "iat_cv": float(iat_cv),
@@ -81,7 +87,7 @@ def extract(event: RequestEvent, store) -> dict:
         "honeypot_filled": 1.0 if event.honeypot_value.strip() else 0.0,
         "ip_reputation": float(store.reputation(event.ip)),
         "asn_datacenter": 1.0 if event.asn_type == "datacenter" else 0.0,
-        "target_req_60s": float(len(target)),
+        "target_req_60s": float(store.target_rate(tkey, now, 60)),
         "target_distinct_ips_60s": float(target_distinct_ips),
     }
 

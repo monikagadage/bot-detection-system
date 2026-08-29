@@ -183,8 +183,14 @@ they arrive as a swarm.
 ## Scaling & operations
 
 - **Counters** are sharded by IP (consistent hashing) across a Redis fleet;
-  each shard is O(1) per request. Approximate structures (count-min sketch,
-  HyperLogLog for "distinct paths") keep memory flat under attack.
+  each shard is O(1) per request. Approximate structures keep memory flat
+  under attack: this repo's `counter="sketch"` mode
+  (`BOTSHIELD_COUNTER=sketch`) estimates request *rates* from a fixed-size
+  count-min sketch (`sketch.py`) instead of exact per-IP history, so a flood
+  of millions of distinct IPs costs the same memory as an idle server. The
+  trade-off: the estimate can over-count (never under-count), timing /
+  distinct-path features fall back to a bounded recent tail, and the model —
+  trained on exact features — sees slight training/serving skew.
 - **Scorers** are stateless — the model is a few KB of weights shipped to
   every edge node. Scale them horizontally behind the load balancer.
 - **Model rollout** is canaried: serve the new model to 1% of traffic, watch
