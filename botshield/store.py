@@ -32,6 +32,7 @@ class Store:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._events: dict[str, deque] = defaultdict(deque)   # ip -> deque[(ts, path)]
+        self._targets: dict[str, deque] = defaultdict(deque)  # target_key -> deque[(ts, ip)]
         self._labels: list[tuple[dict, int, str]] = []        # (features, label, source)
         self._challenges: dict[str, dict] = {}                # token -> {ip, issued, solved}
         self._decisions: dict[str, dict] = {}                 # request_id -> {ip, features, action}
@@ -54,6 +55,24 @@ class Store:
         lo = now - seconds
         with self._lock:
             return [(t, p) for (t, p) in self._events.get(ip, ()) if t >= lo]
+
+    # ---- per-target (per-endpoint) request history -------------------------
+    # Keyed by route+ASN instead of by IP, so a coordinated attack spread
+    # across thousands of quiet IPs still shows up as one loud endpoint.
+
+    def record_target(self, target_key: str, ts: float, ip: str) -> None:
+        with self._lock:
+            dq = self._targets[target_key]
+            dq.append((ts, ip))
+            cutoff = ts - _RETENTION_S
+            while dq and dq[0][0] < cutoff:
+                dq.popleft()
+
+    def target_window(self, target_key: str, now: float, seconds: float) -> list[tuple[float, str]]:
+        """Every (ts, ip) hitting this route+ASN in the last `seconds` seconds."""
+        lo = now - seconds
+        with self._lock:
+            return [(t, ip) for (t, ip) in self._targets.get(target_key, ()) if t >= lo]
 
     # ---- reputation / blocklist -------------------------------------------
 
@@ -127,6 +146,7 @@ class Store:
                 label_sources[src] += 1
             return {
                 "tracked_ips": len(self._events),
+                "tracked_targets": len(self._targets),
                 "decisions": len(self._decisions),
                 "decisions_by_action": dict(actions),
                 "labels": len(self._labels),

@@ -125,6 +125,29 @@ def _credential_stuffer(rng: random.Random, ts0: float) -> tuple[list[RequestEve
     return events, 1
 
 
+def _stuffing_campaign(rng: random.Random, ts0: float) -> tuple[list[RequestEvent], int]:
+    # A credential-stuffing wave run through a residential proxy pool: every
+    # attempt is a fresh, clean IP with a real browser UA and normal headers,
+    # so PER-IP the request looks completely ordinary (1 hit, good
+    # reputation, residential). What gives it away is the ENDPOINT:
+    # /login|residential gets 50-90 distinct IPs inside one minute. Only the
+    # per-target window sees that.
+    n = rng.randint(50, 90)
+    ts = ts0
+    events = []
+    for _ in range(n):
+        ip = f"73.{rng.randint(1, 254)}.{rng.randint(1, 254)}.{rng.randint(1, 254)}"
+        events.append(RequestEvent(
+            ip=ip, method="POST", path="/login", user_agent=rng.choice(_REAL_UAS),
+            accept="text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            accept_language="en-US,en;q=0.9",
+            cookie="session=%d" % rng.randint(1, 999999),  # a fresh session each time
+            asn_type="residential", ts=ts,
+        ))
+        ts += max(0.1, rng.gauss(0.6, 0.2))
+    return events, 1
+
+
 def _mimic(rng: random.Random, ts0: float) -> tuple[list[RequestEvent], int]:
     # Sophisticated scraper: real browser UA, full headers, a cookie, a
     # residential-proxy IP (clean reputation). Only its behaviour betrays it
@@ -152,6 +175,7 @@ SEED_ARCHETYPES = {
     "crawler": _crawler,
     "form_spammer": _form_spammer,
     "credential_stuffer": _credential_stuffer,
+    "stuffing_campaign": _stuffing_campaign,
 }
 # "mimic" is intentionally excluded from the seed mix.
 ALL_ARCHETYPES = {**SEED_ARCHETYPES, "mimic": _mimic}
@@ -182,6 +206,7 @@ def seed_session_counts() -> dict[str, int]:
         "crawler": 30,
         "form_spammer": 25,
         "credential_stuffer": 20,
+        "stuffing_campaign": 12,
     }
 
 
@@ -190,7 +215,7 @@ def build_dataset(
 ) -> tuple[list[list[float]], list[int]]:
     """Replay sessions through a throwaway Store and collect (features, label)
     for every request."""
-    from .features import extract, vector
+    from .features import event_target_key, extract, vector
     from .store import Store
 
     store = Store()
@@ -199,6 +224,7 @@ def build_dataset(
     for _name, events, label in sessions:
         for ev in events:
             store.record(ev.ip, ev.ts, ev.path)
+            store.record_target(event_target_key(ev), ev.ts, ev.ip)
             X.append(vector(extract(ev, store)))
             y.append(label)
     return X, y

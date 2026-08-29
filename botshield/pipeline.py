@@ -15,7 +15,7 @@ import itertools
 
 from . import rules
 from .decision import ALLOW, decide
-from .features import extract, vector
+from .features import event_target_key, extract, vector
 from .model import LogisticRegression
 
 
@@ -30,6 +30,7 @@ class Pipeline:
     def check(self, event):
         """Evaluate one request. Returns (request_id, Decision, features)."""
         self.store.record(event.ip, event.ts, event.path)
+        self.store.record_target(event_target_key(event), event.ts, event.ip)
         features = extract(event, self.store)
         hard_reason, rule_score, hits = rules.evaluate(event, features, self.store)
         decision = decide(event, features, hard_reason, rule_score, hits, self.model, self.store)

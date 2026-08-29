@@ -103,14 +103,18 @@ because every request waits on it. Everything it *learns* from happens
    path, method, TLS fingerprint, timestamp. (`botshield/events.py`)
 2. **Feature extraction** — combine the event with per-IP window state from
    the store into a fixed numeric row. (`botshield/features.py`)
-3. **State store** — sliding-window request counters, reputation feed,
-   labels, challenge tokens. In production: Redis for counters (sharded by
-   IP), a separate feature store / warehouse for labels.
+3. **State store** — sliding-window request counters, keyed two ways: **per
+   IP** ("how fast is this client going?") and **per target** (route + ASN —
+   "is this endpoint under coordinated load?"). Plus the reputation feed,
+   labels, and challenge tokens. In production: Redis for counters (sharded
+   by key), a separate feature store / warehouse for labels.
    (`botshield/store.py`)
-4. **Rules engine** — deterministic checks. **Hard rules** (honeypot filled,
-   50 req/10s, blocklisted IP) short-circuit to BLOCK. **Soft rules**
-   contribute a weighted score. Fast to write, instantly deployable,
-   explainable. (`botshield/rules.py`)
+4. **Rules engine** — deterministic checks in two tiers. **Hard rules**
+   (honeypot filled, 50 req/10s, blocklisted IP) short-circuit to BLOCK.
+   **Escalation rules** (`distributed_attack`) force *at least* a CHALLENGE
+   even if the blended score would have allowed the request. Everything else
+   is a **soft rule** contributing to a saturating weighted score. Fast to
+   write, instantly deployable, explainable. (`botshield/rules.py`)
 5. **Model scorer** — a classifier trained offline on labeled traffic,
    served as fixed weights. Catches combinations of weak signals that no
    single rule expresses. Here it's logistic regression from scratch; real
@@ -129,14 +133,33 @@ because every request waits on it. Everything it *learns* from happens
 | Layer | Examples | Why bots differ |
 |---|---|---|
 | Network | IP/ASN reputation, datacenter vs residential, requests/sec per IP | Bots run from cloud hosts and hit rates humans can't |
+| Per-target | requests/min and distinct-IP count *per endpoint*, not per client | A distributed attack is invisible per-IP (each IP sends one request) but obvious per-endpoint (10k IPs on /login in a minute) |
 | Transport | TLS fingerprint (JA3/JA4), HTTP/2 settings | A Python client's TLS stack ≠ Chrome's, even with a spoofed UA |
 | HTTP | UA string, header presence + *order*, Accept/Accept-Language | Scripts omit headers browsers always send, or send them in the wrong order |
 | Behavioral | inter-request timing regularity, navigation graph, mouse/scroll/keyboard events | Humans are irregular and bursty; loops are metronomes |
 | Challenge | JS proof-of-work result, CAPTCHA, canvas/WebGL fingerprint | Simple bots can't run JS; headless browsers leave tells |
 | Reputation | this fingerprint's history across the whole network | The first site sees a new attack; the 1000th site blocks it on arrival |
 
-This mini version implements the **network**, **HTTP**, and **behavioral**
-rows, plus a **honeypot** and a **challenge** action.
+This mini version implements the **network**, **per-target**, **HTTP**, and
+**behavioral** rows, plus a **honeypot** and a **challenge** action.
+
+### Per-target aggregation (the credential-stuffing answer)
+
+Per-IP features are blind to a distributed attack: run 10,000 login attempts
+through a residential proxy pool and every individual IP looks like one
+ordinary visitor — clean reputation, real browser headers, a single request.
+The attack only exists in aggregate.
+
+So the store keeps a second set of sliding windows keyed by
+`route + ASN` (`/login|residential`) instead of by IP, and feature
+extraction adds `target_req_60s` and `target_distinct_ips_60s`. When an
+endpoint sees many requests from many distinct IPs at once, the
+`distributed_attack` rule fires — and because it's an **escalation rule**,
+every request to that endpoint is forced to at least a CHALLENGE. Real users
+pass it transparently; the bot farm, which can't solve challenges at scale,
+stalls. `simulate.py`'s `stuffing_campaign` archetype shows this: the same
+requests that are `ALLOW`ed one at a time are `CHALLENGE`d / `BLOCK`ed once
+they arrive as a swarm.
 
 ## Key design decisions
 
@@ -194,11 +217,11 @@ rows, plus a **honeypot** and a **challenge** action.
 - **The model is logistic regression** trained in-process on a few thousand
   synthetic rows. Real models are GBMs/DNNs trained on billions of real,
   human-labeled requests.
-- **`credential_stuffer` is deliberately hard here** — each attempt comes
-  from a fresh IP, so per-IP velocity stays low. The real fix is to also
-  aggregate *per target*: "500 failed logins for distinct usernames from one
-  /24 in 5 minutes" is obvious even when each IP looks quiet. That's a
-  second set of windows keyed by `(endpoint, ASN)` instead of by IP.
+- **Per-target aggregation is coarse.** It keys on `route + ASN` and counts
+  requests + distinct IPs. A real system also tracks failure ratio (5xx /
+  401 / 403), distinct usernames tried, and geographic spread, and keys on
+  finer buckets. The distinct-IP count here is exact; at scale it'd be a
+  HyperLogLog sketch.
 - **No canary / model registry / rollback** — `retrain` swaps weights in
   immediately.
 - **The challenge is a stub** — solving it just flips a boolean. A real one

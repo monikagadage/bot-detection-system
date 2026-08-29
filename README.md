@@ -37,15 +37,22 @@ model waves it through (Phase 1); after feedback + retrain it gets caught
 
 ```
 === PHASE 1 — seed model, no feedback yet ===
-  bots caught (recall):     79.2%   (57/72)
+  bots caught (recall):     80.8%   (63/78)
   humans wrongly flagged:    0/60
   mimic                    15          0      0      <- all allowed
+  stuffing_campaign         0          0      6      <- caught per-endpoint
 
 === PHASE 3 — after feedback + retrain (fresh traffic) ===
-  bots caught (recall):     100.0%   (72/72)
+  bots caught (recall):     100.0%   (78/78)
   humans wrongly flagged:    0/60
   mimic                     0         15      0      <- now challenged
 ```
+
+The **`stuffing_campaign`** archetype (credential stuffing through a
+residential proxy pool — every attempt a fresh, clean-looking IP) is caught
+from the start, but only because of **per-endpoint** windows: each IP in
+isolation is `ALLOW`ed; the swarm on `/login` is not. See
+[DESIGN.md](DESIGN.md#per-target-aggregation-the-credential-stuffing-answer).
 
 ### `server.py` — talk to it yourself
 
@@ -92,13 +99,14 @@ curl -s localhost:8500/stats
 ```
 botshield/
   events.py      the request event — the unit of input
-  store.py       sliding-window counters + reputation + labels  (the "Redis")
-  features.py    event + window state  ->  a 13-value feature row
-  rules.py       deterministic checks: hard rules block, soft rules score
+  routes.py      normalize /article/5 -> /article/{id}; per-endpoint keys
+  store.py       sliding-window counters (per-IP AND per-endpoint) + reputation + labels
+  features.py    event + window state  ->  a 15-value feature row
+  rules.py       hard rules block, escalation rules force a challenge, soft rules score
   model.py       logistic regression from scratch (batch + online training)
   decision.py    blend rule score + model score  ->  an action + thresholds
   pipeline.py    wires the stages; owns the feedback loop (retrain)
-  synth.py       labeled synthetic traffic: 5 bot archetypes + humans
+  synth.py       labeled synthetic traffic: 6 bot archetypes + humans
   bootstrap.py   build a trained, wired system in one call
 server.py        the HTTP service
 simulate.py      end-to-end demo
@@ -117,7 +125,8 @@ built it.
 
 - `botshield/decision.py` — `CHALLENGE_AT`, `BLOCK_AT`, `RULE_WEIGHT` /
   `MODEL_WEIGHT`. Lower the thresholds and watch false positives climb.
-- `botshield/rules.py` — add a rule, or change a weight.
+- `botshield/rules.py` — add a rule, change a weight, tune `SATURATION`, or
+  add a name to `ESCALATE_RULES` to make it force a challenge.
 - `botshield/synth.py` — add a bot archetype, or make `mimic` sneakier, and
   see whether the model can still learn it from feedback.
 - `botshield/model.py` — `epochs`, `lr`, `l2` in `fit`.

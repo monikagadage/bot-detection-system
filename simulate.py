@@ -110,7 +110,8 @@ def main() -> None:
     print(f"service up on {BASE}; seed model on {len(srv.SYS.seed_X)} labeled requests")
 
     live_mix = {"human": 60, "naive_scraper": 20, "crawler": 15,
-                "form_spammer": 12, "credential_stuffer": 10, "mimic": 15}
+                "form_spammer": 12, "credential_stuffer": 10,
+                "stuffing_campaign": 6, "mimic": 15}
 
     # ---- PHASE 1 -------------------------------------------------------
     batch1 = generate_sessions(live_mix, seed=101, ts_start=2_000_000.0)

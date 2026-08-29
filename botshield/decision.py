@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .features import vector
+from .rules import ESCALATE_RULES
 
 ALLOW = "ALLOW"
 CHALLENGE = "CHALLENGE"
@@ -53,6 +54,13 @@ def decide(event, features, hard_reason, rule_score, rule_hits, model, store) ->
     combined = RULE_WEIGHT * rule_score + MODEL_WEIGHT * model_p
     reasons = [f"{h.name}: {h.reason}" for h in rule_hits]
     reasons.append(f"model p(bot) = {model_p:.2f}")
+
+    # An escalation rule (e.g. distributed_attack) forces at least a challenge
+    # even when the blended score alone would have allowed the request.
+    escalated = any(h.name in ESCALATE_RULES for h in rule_hits)
+    if escalated and combined < CHALLENGE_AT:
+        combined = CHALLENGE_AT
+        reasons.append("escalated to CHALLENGE by a high-confidence rule")
 
     if combined >= BLOCK_AT:
         return Decision(BLOCK, combined, model_p, rule_score, reasons)

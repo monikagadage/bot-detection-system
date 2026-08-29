@@ -11,23 +11,33 @@ skew" — one of the classic ways an ML system quietly breaks).
 from __future__ import annotations
 
 from .events import BOT_UA_TOKENS, RequestEvent
+from .routes import route_of, target_key
 
 # Order matters — the model stores one weight per position.
 FEATURE_NAMES: list[str] = [
-    "req_10s",             # requests from this IP in the last 10s
-    "req_60s",             # requests from this IP in the last 60s
-    "distinct_paths_60s",  # how many different URLs it hit in 60s
-    "iat_mean",            # mean gap between its requests, seconds
-    "iat_cv",              # gap variability (std/mean); low = robotic timing
-    "ua_missing",          # 1 if no User-Agent at all
-    "ua_bot_token",        # 1 if the UA names a script/tool/crawler
-    "accept_missing",      # 1 if no Accept header (browsers always send one)
-    "accept_lang_missing", # 1 if no Accept-Language header
-    "cookie_missing",      # 1 if no cookie (no established session)
-    "honeypot_filled",     # 1 if the hidden trap field was filled in
-    "ip_reputation",       # 0..1 from the reputation feed
-    "asn_datacenter",      # 1 if the IP is on a hosting/cloud network
+    "req_10s",                 # requests from this IP in the last 10s
+    "req_60s",                 # requests from this IP in the last 60s
+    "distinct_paths_60s",      # how many different URLs it hit in 60s
+    "iat_mean",                # mean gap between its requests, seconds
+    "iat_cv",                  # gap variability (std/mean); low = robotic timing
+    "ua_missing",              # 1 if no User-Agent at all
+    "ua_bot_token",            # 1 if the UA names a script/tool/crawler
+    "accept_missing",          # 1 if no Accept header (browsers always send one)
+    "accept_lang_missing",     # 1 if no Accept-Language header
+    "cookie_missing",          # 1 if no cookie (no established session)
+    "honeypot_filled",         # 1 if the hidden trap field was filled in
+    "ip_reputation",           # 0..1 from the reputation feed
+    "asn_datacenter",          # 1 if the IP is on a hosting/cloud network
+    # --- per-target (per-endpoint) signals: catch attacks spread across IPs ---
+    "target_req_60s",          # total requests to this route+ASN in 60s
+    "target_distinct_ips_60s", # how many distinct IPs are hitting it in 60s
 ]
+
+
+def event_target_key(event: RequestEvent) -> str:
+    """The per-endpoint window key for an event — used by the pipeline to
+    record into the store and here to read the window back."""
+    return target_key(route_of(event.path), event.asn_type)
 
 
 def extract(event: RequestEvent, store) -> dict:
@@ -54,6 +64,9 @@ def extract(event: RequestEvent, store) -> dict:
 
     ua = event.user_agent.lower()
 
+    target = store.target_window(event_target_key(event), now, 60)
+    target_distinct_ips = len({ip for (_t, ip) in target})
+
     return {
         "req_10s": float(len(w10)),
         "req_60s": float(len(w60)),
@@ -68,6 +81,8 @@ def extract(event: RequestEvent, store) -> dict:
         "honeypot_filled": 1.0 if event.honeypot_value.strip() else 0.0,
         "ip_reputation": float(store.reputation(event.ip)),
         "asn_datacenter": 1.0 if event.asn_type == "datacenter" else 0.0,
+        "target_req_60s": float(len(target)),
+        "target_distinct_ips_60s": float(target_distinct_ips),
     }
 
 

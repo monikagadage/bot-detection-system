@@ -16,11 +16,28 @@ keep a rules layer next to the model:
   - hard_reason: a string if a hard rule fired (caller should BLOCK), else None
   - soft_score:  0.0..1.0, the weighted fraction of soft rules that fired
   - hits:        the individual RuleHit objects, for logging / explanation
+
+Two tiers of certainty:
+  - **hard rules** (honeypot, blocklist, impossible rate) force a BLOCK.
+  - **escalation rules** (`ESCALATE_RULES`) force *at least* a CHALLENGE even
+    if the blended score would have said ALLOW — for signals that are strong
+    but where blocking outright would catch too many real users (an endpoint
+    under a distributed attack: challenge everyone, let humans through, let
+    the bot farm fail).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from .routes import SENSITIVE_ROUTES, route_of
+
+# Soft rules that, when they fire, guarantee the decision is at least CHALLENGE.
+ESCALATE_RULES = {"distributed_attack"}
+
+# Fired rule weight that corresponds to a soft score of 1.0 (values above
+# saturate). Tuned so a couple of strong signals ~= "very likely a bot".
+SATURATION = 8.0
 
 
 @dataclass
@@ -61,9 +78,20 @@ def evaluate(event, features: dict, store) -> tuple[str | None, float, list[Rule
                                                                      3.0, "near-constant gap between requests"),
         ("datacenter_ip",       features["asn_datacenter"] == 1.0,    1.5, "request from a hosting/datacenter network"),
         ("bad_reputation",      features["ip_reputation"] > 0.6,      2.5, "IP has poor historical reputation"),
+        ("distributed_attack",
+            features["target_distinct_ips_60s"] >= 8 and features["target_req_60s"] >= 25,
+            4.0,
+            "this endpoint is under coordinated load from many IPs at once"),
+        ("sensitive_endpoint_pressure",
+            route_of(event.path) in SENSITIVE_ROUTES and features["target_req_60s"] >= 15,
+            1.5,
+            "elevated traffic to a login/signup-class endpoint"),
     ]
 
     hits = [RuleHit(name, weight, reason) for (name, fired, weight, reason) in soft if fired]
-    total_weight = sum(weight for (_n, _f, weight, _r) in soft)
-    soft_score = (sum(h.weight for h in hits) / total_weight) if total_weight else 0.0
+    # Saturating scale, not "fraction of all rules": SATURATION points of
+    # fired weight == a rule score of 1.0. Using a fixed constant (rather
+    # than dividing by the total possible weight) means adding a new rule
+    # never dilutes the rules that were already there.
+    soft_score = min(1.0, sum(h.weight for h in hits) / SATURATION)
     return None, soft_score, hits

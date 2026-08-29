@@ -9,6 +9,7 @@ Prints [PASS] / [FAIL] per check and exits non-zero if anything fails.
 from __future__ import annotations
 
 import sys
+from collections import defaultdict
 
 from botshield.bootstrap import build_system
 from botshield.decision import ALLOW, BLOCK, CHALLENGE
@@ -117,6 +118,38 @@ for name, events, label in generate_sessions(mimic_mix, seed=4, ts_start=7_000_0
 
 check("feedback + retrain catches more 'mimic' bots",
       after > before, f"before={before}/30  after={after}/30")
+
+# ---- per-target: a distributed attack is caught even though each IP is clean
+sys3 = build_system(seed=0)
+campaign = generate_sessions({"stuffing_campaign": 1}, seed=55, ts_start=9_000_000.0)[0][1]
+
+solo_actions = set()
+for ev in campaign[:20]:
+    fresh = build_system(seed=0)
+    _rid, d, _f = fresh.pipeline.check(ev)   # this IP, evaluated with no swarm around it
+    solo_actions.add(d.action)
+check("a lone credential-stuffing request looks clean (ALLOW in isolation)",
+      solo_actions == {ALLOW}, f"got {solo_actions}")
+
+swarm_actions = defaultdict(int)
+for ev in campaign:
+    _rid, d, _f = sys3.pipeline.check(ev)
+    swarm_actions[d.action] += 1
+flagged = swarm_actions[CHALLENGE] + swarm_actions[BLOCK]
+check("the same requests as a swarm get flagged (per-target window)",
+      flagged >= 0.6 * len(campaign), f"{flagged}/{len(campaign)} flagged: {dict(swarm_actions)}")
+
+humans_login = build_system(seed=0)
+ok_humans = 0
+h_sessions = generate_sessions({"human": 40}, seed=71, ts_start=10_000_000.0)
+for _n, evs, _l in h_sessions:
+    last_a = None
+    for ev in evs:
+        _rid, d, _f = humans_login.pipeline.check(ev)
+        last_a = d.action
+    ok_humans += last_a == ALLOW
+check("normal users are unaffected by the per-target rules",
+      ok_humans >= 38, f"{ok_humans}/40 allowed")
 
 print()
 if _failures:
