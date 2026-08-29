@@ -1,0 +1,2 @@
+# No dependencies — Python 3.10+ standard library only.
+# This file exists so tooling that expects it does not choke.
