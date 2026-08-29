@@ -137,8 +137,27 @@ botshield/
 server.py        the HTTP service
 simulate.py      end-to-end demo
 selfcheck.py     [PASS]/[FAIL] for every component
+benchmarks/      latency, throughput, memory-under-attack, model cost
 DESIGN.md        architecture, signals, trade-offs, failure modes
 ```
+
+## Benchmarks
+
+```bash
+python3 benchmarks/hotpath_latency.py      # per-request latency + per-stage breakdown
+python3 benchmarks/throughput.py           # req/s in-process vs over HTTP
+python3 benchmarks/memory_under_attack.py  # exact store vs count-min sketch
+python3 benchmarks/model_cost.py           # predict_proba ns/call; fit() vs dataset size
+```
+
+Representative numbers (one laptop, single-threaded — run them yourself):
+
+| | |
+|---|---|
+| `pipeline.check()` latency | p50 ≈ 15 µs, p99 ≈ 26 µs |
+| in-process throughput | ≈ 50k req/s |
+| memory, 500k distinct attacking IPs | exact ≈ 400 MB, sketch ≈ 4 MB |
+| `predict_proba` | ≈ 1.9 µs/call |
 
 ## Tech stack
 

@@ -256,6 +256,27 @@ pieces:
 - **Bloom filters** — "have we seen this fingerprint before?" at memory
   scale is a Bloom-filter question.
 
+## Benchmarks
+
+`benchmarks/` measures the claims this document makes. Numbers below are from
+one laptop, single-threaded — the scripts print their own.
+
+- **`hotpath_latency.py`** — `pipeline.check()` end to end over a warm store:
+  p50 ≈ 15 µs, p99 ≈ 26 µs. Per-stage median: feature extraction dominates
+  (~7 µs), then model + decide (~3.5 µs), rules (~2 µs), store writes (~1.5
+  µs). Comfortably inside a single-digit-millisecond edge budget with room
+  for the network and TLS work that isn't modeled here.
+- **`throughput.py`** — ≈ 50k req/s in-process; ≈ 4k req/s over HTTP through
+  the threaded stdlib server. The gap is transport (socket, HTTP parse, JSON,
+  GIL), not the detector — a real deployment runs the scorer as a library
+  inside the proxy, not behind another HTTP hop.
+- **`memory_under_attack.py`** — exact per-IP history grows linearly with the
+  number of distinct attackers (≈ 400 MB at 500k IPs); the count-min sketch
+  stays flat (≈ 4 MB). This is the whole reason approximate counters exist.
+- **`model_cost.py`** — `predict_proba` ≈ 1.9 µs/call; `fit()` is linear in
+  training-set size (≈ 23 ms/epoch at 14k rows), which is why retraining is
+  an off-the-hot-path batch job, not something you do per request.
+
 ## Run it
 
 See [README.md](README.md). Short version:
@@ -264,4 +285,5 @@ See [README.md](README.md). Short version:
 python3 selfcheck.py     # [PASS]/[FAIL] for every component
 python3 simulate.py      # end-to-end: traffic -> decisions -> feedback -> retrain
 python3 server.py        # the actual service, then curl localhost:8500/check
+python3 benchmarks/hotpath_latency.py   # (and the other benchmarks/*.py)
 ```
