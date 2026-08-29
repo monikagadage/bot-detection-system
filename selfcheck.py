@@ -8,7 +8,9 @@ Prints [PASS] / [FAIL] per check and exits non-zero if anything fails.
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 from collections import defaultdict
 
 from botshield.bootstrap import build_system
@@ -150,6 +152,25 @@ for _n, evs, _l in h_sessions:
     ok_humans += last_a == ALLOW
 check("normal users are unaffected by the per-target rules",
       ok_humans >= 38, f"{ok_humans}/40 allowed")
+
+# ---- persistence: labels + decisions + model survive a restart ------
+with tempfile.TemporaryDirectory() as _tmp:
+    db = os.path.join(_tmp, "s.db")
+    mp = os.path.join(_tmp, "m.json")
+
+    s_a = build_system(seed=0, persist_path=db, model_path=mp)
+    ev = RequestEvent(ip="185.9.9.9", path="/x", user_agent="curl/8", ts=1.0)
+    rid, _d, _f = s_a.pipeline.check(ev)
+    s_a.pipeline.on_feedback(rid, 1, "review")
+    labels_a = len(s_a.store.labels())
+
+    s_b = build_system(seed=0, persist_path=db, model_path=mp)   # "restart"
+    check("labels reload from SQLite after restart",
+          len(s_b.store.labels()) == labels_a and labels_a >= 1,
+          f"{len(s_b.store.labels())} vs {labels_a}")
+    check("the decision log reload lets old request_ids resolve",
+          s_b.store.get_decision(rid) is not None, f"{rid} missing after restart")
+    check("model.json is written", os.path.exists(mp))
 
 print()
 if _failures:

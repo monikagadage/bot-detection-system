@@ -10,6 +10,11 @@ In production this is split across systems:
 
 Here it is one in-memory object behind a lock. The lock matters: the HTTP
 server is threaded, so several requests touch this at once.
+
+Pass `persist_path` to mirror the labels, decision log, and challenge tokens
+to a SQLite file and reload them on startup — see `persist.py`. The
+in-memory structures stay the read path; SQLite is just write-through
+durability.
 """
 
 from __future__ import annotations
@@ -17,6 +22,8 @@ from __future__ import annotations
 import threading
 import time
 from collections import defaultdict, deque
+
+from .persist import Db
 
 # IPs whose first two octets match one of these are treated as having poor
 # reputation (score 0.8). Stands in for a real reputation feed. 185.* and
@@ -29,7 +36,7 @@ _RETENTION_S = 120.0
 
 
 class Store:
-    def __init__(self) -> None:
+    def __init__(self, persist_path: str | None = None) -> None:
         self._lock = threading.Lock()
         self._events: dict[str, deque] = defaultdict(deque)   # ip -> deque[(ts, path)]
         self._targets: dict[str, deque] = defaultdict(deque)  # target_key -> deque[(ts, ip)]
@@ -38,6 +45,14 @@ class Store:
         self._decisions: dict[str, dict] = {}                 # request_id -> {ip, features, action}
         self._blocklist: set[str] = set()
         self._reputation: dict[str, float] = {}              # dynamic overrides
+
+        # Optional SQLite durability. Reload prior state so /feedback still
+        # resolves old request_ids and the model can be retrained from disk.
+        self._db = Db(persist_path) if persist_path else None
+        if self._db is not None:
+            self._labels = self._db.load_labels()
+            self._decisions = self._db.load_decisions()
+            self._challenges = self._db.load_challenges()
 
     # ---- sliding-window request history -------------------------------------
 
@@ -100,6 +115,8 @@ class Store:
     def add_label(self, features: dict, label: int, source: str) -> None:
         with self._lock:
             self._labels.append((dict(features), int(label), source))
+            if self._db is not None:
+                self._db.add_label(features, int(label), source, time.time())
 
     def labels(self) -> list[tuple[dict, int, str]]:
         with self._lock:
@@ -111,6 +128,8 @@ class Store:
         with self._lock:
             token = f"chal-{len(self._challenges)}-{int(ts * 1000) % 1_000_000}"
             self._challenges[token] = {"ip": ip, "issued": ts, "solved": False}
+            if self._db is not None:
+                self._db.put_challenge(token, ip, ts, False)
             return token
 
     def solve_challenge(self, token: str) -> dict | None:
@@ -119,6 +138,8 @@ class Store:
             if c is None:
                 return None
             c["solved"] = True
+            if self._db is not None:
+                self._db.put_challenge(token, c["ip"], c["issued"], True)
             return dict(c)
 
     # ---- decision log --------------------------------------------------
@@ -130,6 +151,8 @@ class Store:
                 "features": dict(features),
                 "action": action,
             }
+            if self._db is not None:
+                self._db.put_decision(request_id, ip, features, action, time.time())
 
     def get_decision(self, request_id: str) -> dict | None:
         with self._lock:
@@ -154,4 +177,5 @@ class Store:
                 "challenges_issued": len(self._challenges),
                 "challenges_solved": sum(1 for c in self._challenges.values() if c["solved"]),
                 "blocklist_size": len(self._blocklist),
+                "persistent": self._db is not None,
             }

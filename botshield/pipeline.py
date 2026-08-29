@@ -20,10 +20,17 @@ from .model import LogisticRegression
 
 
 class Pipeline:
-    def __init__(self, store, model: LogisticRegression) -> None:
+    def __init__(self, store, model: LogisticRegression, model_path: str | None = None) -> None:
         self.store = store
         self.model = model
+        self.model_path = model_path
         self._ids = itertools.count(1)
+
+    def save_model(self) -> None:
+        """Persist the current model weights, if a path was configured."""
+        if self.model_path:
+            with open(self.model_path, "w") as fh:
+                fh.write(self.model.to_json())
 
     # ---- hot path -----------------------------------------------------
 
@@ -76,6 +83,7 @@ class Pipeline:
         fresh = LogisticRegression(len(seed_X[0]) if seed_X else len(vector(labels[0][0])))
         fresh.fit(X, y)
         self.model.load_from(fresh)  # atomic-ish swap into the live model
+        self.save_model()
 
         return {
             "seed_examples": len(seed_X),

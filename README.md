@@ -94,6 +94,18 @@ curl -s localhost:8500/stats
 | `POST /retrain` | `{}` | refit the model on the seed set + all collected labels |
 | `GET /stats` | — | counters + the model's current top features |
 
+### Persistence (optional)
+
+```bash
+BOTSHIELD_DATA=./data python3 server.py
+```
+
+Mirrors the label store, the decision log, and challenge tokens to
+`data/botshield.db` (SQLite) and the trained model to `data/model.json`. On
+restart the model and labels reload, and `/feedback` still resolves
+`request_id`s issued before the restart. Without the env var everything
+stays in memory (the default).
+
 ## Layout
 
 ```
@@ -101,6 +113,7 @@ botshield/
   events.py      the request event — the unit of input
   routes.py      normalize /article/5 -> /article/{id}; per-endpoint keys
   store.py       sliding-window counters (per-IP AND per-endpoint) + reputation + labels
+  persist.py     optional SQLite write-through for labels / decisions / challenges
   features.py    event + window state  ->  a 15-value feature row
   rules.py       hard rules block, escalation rules force a challenge, soft rules score
   model.py       logistic regression from scratch (batch + online training)

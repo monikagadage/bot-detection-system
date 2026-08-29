@@ -26,18 +26,29 @@ Routes:
     POST /retrain    body = {}                         -> retrain on collected labels
     GET  /stats                                        -> counters + top model features
     GET  /                                             -> this route list
+
+Set BOTSHIELD_DATA=./data to persist labels, the decision log, and the
+learned model across restarts (SQLite + model.json under that directory).
 """
 
 from __future__ import annotations
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from botshield.bootstrap import build_system
 from botshield.events import RequestEvent
 from botshield.features import FEATURE_NAMES
 
-SYS = build_system()
+_DATA_DIR = os.environ.get("BOTSHIELD_DATA")
+if _DATA_DIR:
+    SYS = build_system(
+        persist_path=os.path.join(_DATA_DIR, "botshield.db"),
+        model_path=os.path.join(_DATA_DIR, "model.json"),
+    )
+else:
+    SYS = build_system()
 
 
 def _make_handler():
@@ -122,6 +133,9 @@ def main(host: str = "127.0.0.1", port: int = 8500) -> None:
     server = ThreadingHTTPServer((host, port), _make_handler())
     print(f"botshield listening on http://{host}:{port}  (Ctrl-C to stop)")
     print(f"seed model trained on {len(SYS.seed_X)} labeled requests")
+    if _DATA_DIR:
+        print(f"persisting to {_DATA_DIR}/ "
+              f"({len(SYS.store.labels())} labels loaded from disk)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

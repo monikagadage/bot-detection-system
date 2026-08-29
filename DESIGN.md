@@ -213,7 +213,11 @@ they arrive as a swarm.
 - **No TLS/HTTP-2 fingerprinting** — the highest-signal features in real
   systems. We only see application-level headers.
 - **State is one in-memory `Store` object**, not a sharded Redis fleet;
-  counters are exact lists, not sketches.
+  counters are exact lists, not sketches. It can optionally write labels /
+  decisions / challenges through to a local SQLite file and reload them on
+  restart (`persist.py`, `BOTSHIELD_DATA=./data`), with the learned model
+  saved alongside as JSON — but that's a single-node stand-in for what would
+  be a warehouse + feature store + model registry.
 - **The model is logistic regression** trained in-process on a few thousand
   synthetic rows. Real models are GBMs/DNNs trained on billions of real,
   human-labeled requests.
