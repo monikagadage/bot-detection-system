@@ -33,10 +33,12 @@ from botshield.synth import generate_sessions
 BASE = "http://127.0.0.1:8599"
 
 
-def _post(path: str, payload: dict) -> dict:
+def _post(path: str, payload: dict, timeout: float = 5.0) -> dict:
+    # /retrain refits the model on a few thousand examples of hand-rolled
+    # gradient descent — seconds, not milliseconds, on a slow CI runner.
     data = json.dumps(payload).encode()
     req = urllib.request.Request(BASE + path, data=data, method="POST")
-    with urllib.request.urlopen(req, timeout=5) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
 
 
@@ -139,7 +141,7 @@ def main() -> None:
     print(f"\n[operator labeled {fed_sessions} missed-bot sessions "
           f"({fed_labels} request labels total) + a sample of confirmed humans]")
 
-    retrain_summary = _post("/retrain", {})
+    retrain_summary = _post("/retrain", {}, timeout=60)
     print("[retrained]", json.dumps({k: retrain_summary[k] for k in
           ("seed_examples", "collected_labels", "total_examples")}))
     print("  top model features now:", ", ".join(
