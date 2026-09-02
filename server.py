@@ -35,6 +35,8 @@ Set BOTSHIELD_DATA=./data to persist labels, the decision log, and the
 learned model across restarts (SQLite + model.json under that directory).
 Set BOTSHIELD_COUNTER=sketch to estimate request rates from a fixed-size
 count-min sketch instead of exact per-IP history.
+Set BOTSHIELD_HOST / BOTSHIELD_PORT to change the bind address (the Docker
+image sets BOTSHIELD_HOST=0.0.0.0).
 """
 
 from __future__ import annotations
@@ -222,4 +224,7 @@ def main(host: str = "127.0.0.1", port: int = 8500) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(
+        host=os.environ.get("BOTSHIELD_HOST", "127.0.0.1"),
+        port=int(os.environ.get("BOTSHIELD_PORT", "8500")),
+    )
