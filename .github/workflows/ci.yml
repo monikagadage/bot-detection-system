@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dev tooling
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Unit + integration tests (pytest)
+        run: pytest
+
+      - name: Self-check (component wiring)
+        run: python selfcheck.py
+
+      - name: End-to-end feedback-loop simulation
+        run: python simulate.py
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Smoke-run the benchmarks so a change that breaks them fails CI.
+      # Numbers are informational — CI hardware is not a stable baseline.
+      - name: Benchmarks (smoke)
+        run: |
+          python benchmarks/hotpath_latency.py
+          python benchmarks/throughput.py
+          python benchmarks/memory_under_attack.py
+          python benchmarks/model_cost.py

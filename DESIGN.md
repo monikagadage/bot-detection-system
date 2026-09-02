@@ -1,11 +1,12 @@
 # Bot Detection — Design
 
-A small, working model of how a site tells automated clients apart from
-humans in the request path: feature extraction, a deterministic rules
-engine, a learned scorer, an `ALLOW` / `CHALLENGE` / `BLOCK` policy, and a
-feedback loop that retrains on what it got wrong. Not production
-infrastructure — the same *ideas* stripped down to something readable end to
-end. See [README.md](README.md) to run it.
+How a site tells automated clients apart from humans in the request path:
+feature extraction, a deterministic rules engine, a learned scorer, an
+`ALLOW` / `CHALLENGE` / `BLOCK` policy, and an asynchronous feedback loop
+that retrains on what the system got wrong. The architecture mirrors
+managed bot-management services (Cloudflare Bot Management, DataDome, HUMAN,
+Akamai); the implementation is deliberately small enough to audit in full.
+See [README.md](README.md) to run it.
 
 ## The problem
 

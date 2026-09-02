@@ -1,0 +1,15 @@
+# The package itself has no runtime dependencies (standard library only).
+# This file configures the dev tooling: pytest and ruff.
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

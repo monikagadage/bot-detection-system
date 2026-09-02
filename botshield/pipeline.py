@@ -14,7 +14,7 @@ from __future__ import annotations
 import itertools
 
 from . import rules
-from .decision import ALLOW, decide
+from .decision import decide
 from .features import event_target_key, extract, vector
 from .model import LogisticRegression
 from .routes import route_of
